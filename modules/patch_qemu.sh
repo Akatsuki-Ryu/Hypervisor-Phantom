@@ -511,22 +511,22 @@ compile_qemu() {
     return 1
   fi
 
-  # Copy ROM files to system location for libvirt compatibility
-  fmtr::log "Installing QEMU ROM files to system location..."
-  local local_rom_dir="/usr/local/share/qemu"
-  local system_rom_dir="/usr/share/qemu"
+  # Copy firmware files (ROM and BIOS) to system location for libvirt compatibility
+  fmtr::log "Installing QEMU firmware files to system location..."
+  local local_fw_dir="/usr/local/share/qemu"
+  local system_fw_dir="/usr/share/qemu"
   
-  if [[ -d "$local_rom_dir" ]]; then
-    $ROOT_ESC mkdir -p "$system_rom_dir" || {
-      fmtr::warn "Failed to create $system_rom_dir directory"
+  if [[ -d "$local_fw_dir" ]]; then
+    $ROOT_ESC mkdir -p "$system_fw_dir" || {
+      fmtr::warn "Failed to create $system_fw_dir directory"
     }
     
     # Copy all ROM files (efi-virtio.rom and others)
     local rom_count=0
-    for rom_file in "${local_rom_dir}"/*.rom; do
+    for rom_file in "${local_fw_dir}"/*.rom; do
       if [[ -f "$rom_file" ]]; then
         local rom_name=$(basename "$rom_file")
-        $ROOT_ESC cp "$rom_file" "${system_rom_dir}/${rom_name}" 2>/dev/null && {
+        $ROOT_ESC cp "$rom_file" "${system_fw_dir}/${rom_name}" 2>/dev/null && {
           ((rom_count++))
         } || {
           fmtr::warn "Failed to copy $rom_name to system location"
@@ -534,13 +534,27 @@ compile_qemu() {
       fi
     done
     
-    if [[ $rom_count -gt 0 ]]; then
-      fmtr::log "Installed $rom_count ROM file(s) to $system_rom_dir"
+    # Copy all BIOS/VGA BIOS files (vgabios-qxl.bin and others)
+    local bin_count=0
+    for bin_file in "${local_fw_dir}"/*.bin; do
+      if [[ -f "$bin_file" ]]; then
+        local bin_name=$(basename "$bin_file")
+        $ROOT_ESC cp "$bin_file" "${system_fw_dir}/${bin_name}" 2>/dev/null && {
+          ((bin_count++))
+        } || {
+          fmtr::warn "Failed to copy $bin_name to system location"
+        }
+      fi
+    done
+    
+    local total_count=$((rom_count + bin_count))
+    if [[ $total_count -gt 0 ]]; then
+      fmtr::log "Installed $rom_count ROM file(s) and $bin_count BIOS file(s) to $system_fw_dir"
     else
-      fmtr::warn "No ROM files found in $local_rom_dir"
+      fmtr::warn "No firmware files found in $local_fw_dir"
     fi
   else
-    fmtr::warn "ROM directory $local_rom_dir not found, skipping ROM file installation"
+    fmtr::warn "Firmware directory $local_fw_dir not found, skipping firmware file installation"
   fi
 
   fmtr::info "Compilation finished!"
