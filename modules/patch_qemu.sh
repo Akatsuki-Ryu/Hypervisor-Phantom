@@ -562,26 +562,11 @@ compile_qemu() {
 }
 
 replace_system_qemu() {
-  local custom_qemu="/usr/local/bin/qemu-system-x86_64"
-  local system_qemu="/usr/bin/qemu-system-x86_64"
-  local backup_qemu="/usr/bin/qemu-system-x86_64.backup"
+  local custom_bin_dir="/usr/local/bin"
+  local system_bin_dir="/usr/bin"
+  local backup_dir="/usr/bin/qemu-backup"
 
-  # Check if custom QEMU exists (it should after make install)
-  if [[ ! -f "$custom_qemu" ]]; then
-    # Check if it was already moved/disabled in a previous run
-    if [[ -f "${custom_qemu}.disabled" ]]; then
-      fmtr::log "Custom QEMU was already disabled, using it for replacement"
-      $ROOT_ESC mv "${custom_qemu}.disabled" "$custom_qemu" || {
-        fmtr::error "Failed to restore custom QEMU from disabled state"
-        return 1
-      }
-    else
-      fmtr::error "Custom QEMU binary not found at $custom_qemu"
-      return 1
-    fi
-  fi
-
-  fmtr::log "Replacing system QEMU with patched version..."
+  fmtr::log "Replacing system QEMU binaries with patched versions..."
 
   # Stop libvirt services first to avoid "Text file busy" errors
   fmtr::log "Stopping libvirt services to allow QEMU replacement..."
@@ -600,51 +585,89 @@ replace_system_qemu() {
   # Wait a moment for services to fully stop
   sleep 1
 
-  # Backup existing system QEMU if it exists and isn't already a backup
-  if [[ -f "$system_qemu" && ! -L "$system_qemu" ]]; then
-    if [[ ! -f "$backup_qemu" ]]; then
-      fmtr::log "Backing up original system QEMU to $backup_qemu"
-      $ROOT_ESC cp "$system_qemu" "$backup_qemu" || {
-        fmtr::warn "Failed to backup system QEMU, continuing anyway..."
-      }
-    else
-      fmtr::log "Backup already exists at $backup_qemu"
-    fi
-  fi
+  # Create backup directory if it doesn't exist
+  $ROOT_ESC mkdir -p "$backup_dir" 2>/dev/null || {
+    fmtr::warn "Failed to create backup directory"
+  }
 
-  # Replace system QEMU with custom one using mv (atomic operation)
-  # If cp fails due to file being busy, try mv instead
-  fmtr::log "Copying patched QEMU to $system_qemu"
-  if ! $ROOT_ESC cp "$custom_qemu" "$system_qemu" 2>/dev/null; then
+  # Find all QEMU binaries in /usr/local/bin
+  local replaced_count=0
+  local skipped_count=0
+  local error_count=0
+
+  for custom_binary in "${custom_bin_dir}"/qemu-*; do
+    # Skip if it's a directory or doesn't exist
+    [[ ! -f "$custom_binary" ]] && continue
+    
+    # Skip disabled binaries (we'll restore them first)
+    local binary_name=$(basename "$custom_binary")
+    if [[ "$binary_name" == *.disabled ]]; then
+      # Restore disabled binary
+      local restored_name="${binary_name%.disabled}"
+      fmtr::log "Restoring disabled binary: $binary_name -> $restored_name"
+      $ROOT_ESC mv "$custom_binary" "${custom_bin_dir}/${restored_name}" 2>/dev/null || {
+        fmtr::warn "Failed to restore $binary_name"
+        continue
+      }
+      binary_name="$restored_name"
+      custom_binary="${custom_bin_dir}/${binary_name}"
+    fi
+
+    local system_binary="${system_bin_dir}/${binary_name}"
+    local backup_binary="${backup_dir}/${binary_name}"
+
+    # Check if corresponding system binary exists
+    if [[ -f "$system_binary" && ! -L "$system_binary" ]]; then
+      # Backup system binary if backup doesn't exist
+      if [[ ! -f "$backup_binary" ]]; then
+        fmtr::log "Backing up $binary_name"
+        $ROOT_ESC cp "$system_binary" "$backup_binary" 2>/dev/null || {
+          fmtr::warn "Failed to backup $binary_name"
+        }
+      fi
+    fi
+
+    # Replace system binary with custom one
+    fmtr::log "Replacing $binary_name"
+    if ! $ROOT_ESC cp "$custom_binary" "$system_binary" 2>/dev/null; then
     # If cp fails, try using mv (which works even if file is in use)
-    fmtr::log "Copy failed, trying atomic move operation..."
-    if [[ -f "$system_qemu" ]]; then
-      $ROOT_ESC mv "$system_qemu" "${system_qemu}.old" 2>/dev/null || {
-        fmtr::error "Failed to move existing system QEMU"
-        return 1
+      if [[ -f "$system_binary" ]]; then
+        $ROOT_ESC mv "$system_binary" "${system_binary}.old" 2>/dev/null || {
+          fmtr::warn "Failed to move existing $binary_name, skipping..."
+          ((error_count++))
+          continue
       }
     fi
-    $ROOT_ESC cp "$custom_qemu" "$system_qemu" || {
-      fmtr::error "Failed to copy patched QEMU to system location"
-      return 1
+      $ROOT_ESC cp "$custom_binary" "$system_binary" 2>/dev/null || {
+        fmtr::error "Failed to copy $binary_name to system location"
+        ((error_count++))
+        continue
     }
   fi
 
   # Ensure proper permissions
-  $ROOT_ESC chmod 755 "$system_qemu" || {
-    fmtr::warn "Failed to set permissions on $system_qemu"
+    $ROOT_ESC chmod 755 "$system_binary" 2>/dev/null || {
+      fmtr::warn "Failed to set permissions on $binary_name"
   }
 
-  # Remove or disable the /usr/local/bin version to prevent libvirt from using it
+    # Disable the /usr/local/bin version to prevent libvirt from using it
   # (libvirt may prefer /usr/local/bin over /usr/bin in PATH search)
-  if [[ -f "$custom_qemu" ]]; then
-    fmtr::log "Disabling $custom_qemu to ensure libvirt uses system QEMU"
-    $ROOT_ESC mv "$custom_qemu" "${custom_qemu}.disabled" 2>/dev/null || {
-      fmtr::warn "Failed to disable $custom_qemu (may not be necessary)"
+    if [[ -f "$custom_binary" ]]; then
+      $ROOT_ESC mv "$custom_binary" "${custom_binary}.disabled" 2>/dev/null || {
+        fmtr::warn "Failed to disable $binary_name (may not be necessary)"
     }
   fi
 
-  fmtr::info "System QEMU replaced successfully"
+    ((replaced_count++))
+  done
+
+  if [[ $replaced_count -gt 0 ]]; then
+    fmtr::info "Successfully replaced $replaced_count QEMU binary/binarie(s)"
+  fi
+
+  if [[ $error_count -gt 0 ]]; then
+    fmtr::warn "Failed to replace $error_count binary/binarie(s)"
+  fi
 
   # Clear libvirt cache to force re-detection of QEMU
   fmtr::log "Clearing libvirt capabilities cache..."
@@ -666,7 +689,7 @@ replace_system_qemu() {
     fmtr::warn "Libvirt services not enabled, skipping restart"
   fi
 
-  fmtr::info "Libvirt services restarted. You may need to restart virt-manager."
+  fmtr::info "System QEMU binaries replaced successfully. You may need to restart virt-manager."
 }
 
 cleanup() {
