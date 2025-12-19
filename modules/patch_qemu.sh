@@ -511,6 +511,38 @@ compile_qemu() {
     return 1
   fi
 
+  # Copy ROM files to system location for libvirt compatibility
+  fmtr::log "Installing QEMU ROM files to system location..."
+  local local_rom_dir="/usr/local/share/qemu"
+  local system_rom_dir="/usr/share/qemu"
+  
+  if [[ -d "$local_rom_dir" ]]; then
+    $ROOT_ESC mkdir -p "$system_rom_dir" || {
+      fmtr::warn "Failed to create $system_rom_dir directory"
+    }
+    
+    # Copy all ROM files (efi-virtio.rom and others)
+    local rom_count=0
+    for rom_file in "${local_rom_dir}"/*.rom; do
+      if [[ -f "$rom_file" ]]; then
+        local rom_name=$(basename "$rom_file")
+        $ROOT_ESC cp "$rom_file" "${system_rom_dir}/${rom_name}" 2>/dev/null && {
+          ((rom_count++))
+        } || {
+          fmtr::warn "Failed to copy $rom_name to system location"
+        }
+      fi
+    done
+    
+    if [[ $rom_count -gt 0 ]]; then
+      fmtr::log "Installed $rom_count ROM file(s) to $system_rom_dir"
+    else
+      fmtr::warn "No ROM files found in $local_rom_dir"
+    fi
+  else
+    fmtr::warn "ROM directory $local_rom_dir not found, skipping ROM file installation"
+  fi
+
   fmtr::info "Compilation finished!"
   replace_system_qemu
 }
