@@ -36,6 +36,9 @@ REQUIRED_PKGS_Arch=(
 
   # USB redirection Dependencie(s)
   usbredir
+
+  # Linux AIO Dependencie(s)
+  libaio
 )
 
 REQUIRED_PKGS_Debian=(
@@ -52,6 +55,9 @@ REQUIRED_PKGS_Debian=(
 
   # USB redirection Dependencie(s)
   libusbredirhost-dev libusbredirparser-dev
+
+  # Linux AIO Dependencie(s)
+  libaio-dev
 )
 
 REQUIRED_PKGS_openSUSE=(
@@ -67,6 +73,9 @@ REQUIRED_PKGS_openSUSE=(
 
   # USB redirection Dependencie(s)
   libusbredir-devel
+
+  # Linux AIO Dependencie(s)
+  libaio-devel
 )
 
 REQUIRED_PKGS_Fedora=(
@@ -82,6 +91,9 @@ REQUIRED_PKGS_Fedora=(
 
   # USB redirection Dependencie(s)
   usbredir-devel
+
+  # Linux AIO Dependencie(s)
+  libaio-devel
 )
 
 acquire_qemu_source() {
@@ -477,6 +489,7 @@ compile_qemu() {
               --enable-usb-redir \
               --enable-spice \
               --enable-spice-protocol \
+              --enable-linux-aio \
               --disable-werror &>> "$LOG_FILE"
 
   if [[ $? -ne 0 ]]; then
