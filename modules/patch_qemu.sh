@@ -499,6 +499,115 @@ compile_qemu() {
   fi
 
   fmtr::info "Compilation finished!"
+  replace_system_qemu
+}
+
+replace_system_qemu() {
+  local custom_qemu="/usr/local/bin/qemu-system-x86_64"
+  local system_qemu="/usr/bin/qemu-system-x86_64"
+  local backup_qemu="/usr/bin/qemu-system-x86_64.backup"
+
+  # Check if custom QEMU exists (it should after make install)
+  if [[ ! -f "$custom_qemu" ]]; then
+    # Check if it was already moved/disabled in a previous run
+    if [[ -f "${custom_qemu}.disabled" ]]; then
+      fmtr::log "Custom QEMU was already disabled, using it for replacement"
+      $ROOT_ESC mv "${custom_qemu}.disabled" "$custom_qemu" || {
+        fmtr::error "Failed to restore custom QEMU from disabled state"
+        return 1
+      }
+    else
+      fmtr::error "Custom QEMU binary not found at $custom_qemu"
+      return 1
+    fi
+  fi
+
+  fmtr::log "Replacing system QEMU with patched version..."
+
+  # Stop libvirt services first to avoid "Text file busy" errors
+  fmtr::log "Stopping libvirt services to allow QEMU replacement..."
+  if systemctl is-active --quiet libvirtd.service 2>/dev/null; then
+    $ROOT_ESC systemctl stop libvirtd.service &>> "$LOG_FILE" || {
+      fmtr::warn "Failed to stop libvirtd.service, continuing anyway..."
+    }
+  fi
+
+  if systemctl is-active --quiet libvirtd.socket 2>/dev/null; then
+    $ROOT_ESC systemctl stop libvirtd.socket &>> "$LOG_FILE" || {
+      fmtr::warn "Failed to stop libvirtd.socket, continuing anyway..."
+    }
+  fi
+
+  # Wait a moment for services to fully stop
+  sleep 1
+
+  # Backup existing system QEMU if it exists and isn't already a backup
+  if [[ -f "$system_qemu" && ! -L "$system_qemu" ]]; then
+    if [[ ! -f "$backup_qemu" ]]; then
+      fmtr::log "Backing up original system QEMU to $backup_qemu"
+      $ROOT_ESC cp "$system_qemu" "$backup_qemu" || {
+        fmtr::warn "Failed to backup system QEMU, continuing anyway..."
+      }
+    else
+      fmtr::log "Backup already exists at $backup_qemu"
+    fi
+  fi
+
+  # Replace system QEMU with custom one using mv (atomic operation)
+  # If cp fails due to file being busy, try mv instead
+  fmtr::log "Copying patched QEMU to $system_qemu"
+  if ! $ROOT_ESC cp "$custom_qemu" "$system_qemu" 2>/dev/null; then
+    # If cp fails, try using mv (which works even if file is in use)
+    fmtr::log "Copy failed, trying atomic move operation..."
+    if [[ -f "$system_qemu" ]]; then
+      $ROOT_ESC mv "$system_qemu" "${system_qemu}.old" 2>/dev/null || {
+        fmtr::error "Failed to move existing system QEMU"
+        return 1
+      }
+    fi
+    $ROOT_ESC cp "$custom_qemu" "$system_qemu" || {
+      fmtr::error "Failed to copy patched QEMU to system location"
+      return 1
+    }
+  fi
+
+  # Ensure proper permissions
+  $ROOT_ESC chmod 755 "$system_qemu" || {
+    fmtr::warn "Failed to set permissions on $system_qemu"
+  }
+
+  # Remove or disable the /usr/local/bin version to prevent libvirt from using it
+  # (libvirt may prefer /usr/local/bin over /usr/bin in PATH search)
+  if [[ -f "$custom_qemu" ]]; then
+    fmtr::log "Disabling $custom_qemu to ensure libvirt uses system QEMU"
+    $ROOT_ESC mv "$custom_qemu" "${custom_qemu}.disabled" 2>/dev/null || {
+      fmtr::warn "Failed to disable $custom_qemu (may not be necessary)"
+    }
+  fi
+
+  fmtr::info "System QEMU replaced successfully"
+
+  # Clear libvirt cache to force re-detection of QEMU
+  fmtr::log "Clearing libvirt capabilities cache..."
+  $ROOT_ESC rm -rf /var/cache/libvirt/qemu/capabilities/* 2>/dev/null || {
+    fmtr::warn "Failed to clear libvirt cache (may not exist)"
+  }
+
+  # Restart libvirt services to pick up the new QEMU
+  fmtr::log "Restarting libvirt services..."
+  if systemctl is-enabled --quiet libvirtd.service 2>/dev/null || \
+     systemctl is-enabled --quiet libvirtd.socket 2>/dev/null; then
+    $ROOT_ESC systemctl start libvirtd.socket &>> "$LOG_FILE" || {
+      fmtr::warn "Failed to start libvirtd.socket"
+    }
+    $ROOT_ESC systemctl start libvirtd.service &>> "$LOG_FILE" || {
+      fmtr::warn "Failed to start libvirtd.service"
+    }
+  else
+    fmtr::warn "Libvirt services not enabled, skipping restart"
+  fi
+
+  fmtr::info "Libvirt services restarted. You may need to restart virt-manager."
 }
 
 cleanup() {
