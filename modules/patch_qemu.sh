@@ -490,7 +490,9 @@ compile_qemu() {
               --enable-spice \
               --enable-spice-protocol \
               --enable-linux-aio \
-              --disable-werror &>> "$LOG_FILE"
+              --disable-werror \
+              --enable-vnc --enable-sdl --enable-opengl --enable-kvm --enable-pa --enable-pipewire --enable-slirp --enable-spice --enable-spice-protocol --enable-usb-redir --enable-virglrenderer --enable-virtfs --enable-vhost-kernel --enable-vhost-user --enable-gtk --enable-system --enable-libusb \
+              &>> "$LOG_FILE"
 
   if [[ $? -ne 0 ]]; then
     fmtr::error "Configure failed. Check $LOG_FILE"
